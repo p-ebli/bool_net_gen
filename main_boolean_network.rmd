@@ -1,0 +1,62 @@
+---
+title: "Boolean Network Analysis"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load all functions from the functions file
+source("boolean_network_functions.R")
+
+
+#-_-_-_-_-_- Please Provide number of nodes in num_nodes -_-_-_-_-_-
+
+# Parameters
+num_nodes <- 2
+output_dir <- "network_rules"
+log_file <- "terminal_output_log.txt"
+
+# Main processing function
+process_networks <- function(num_nodes, output_dir, log_file) {
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  sink(log_file, split = TRUE)
+  on.exit(sink())
+
+  mats <- generate_unique_adjacency_matrices(num_nodes)
+  results <- vector("list", length(mats))
+
+  for (i in seq_along(mats)) {
+    mat <- mats[[i]]
+    nn <- nrow(mat)
+    names <- LETTERS[1:nn]
+    dimnames(mat) <- list(names, names)
+
+    exprs <- generate_boolean_expressions(mat)
+    file_path <- file.path(output_dir, paste0("network_", i, ".txt"))
+    build_rule_file(exprs, file_path)
+
+    res <- analyze_network(file_path)
+    results[[i]] <- list(
+      matrix           = mat,
+      expressions      = exprs,
+      attractors       = res$attractors,
+      transition_table = res$transitionTable
+    )
+
+    # Console output
+    cat(sprintf("\n=== Network %d ===\n", i))
+    cat("Rules:\n")
+    for (line in readLines(file_path)[-1]) cat(line, "\n")
+    cat("Attractors:\n"); print(res$attractors)
+    cat("Transition Table:\n"); print(res$transitionTable)
+    cat(strrep("-", 40), "\n")
+  }
+
+  sink()
+  cat("Log file written to:", log_file, "\n")
+  invisible(results)
+}
+
+# Execute main processing
+results <- process_networks(num_nodes, output_dir, log_file)
