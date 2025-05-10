@@ -1,147 +1,208 @@
-# Boolean Network Analysis Script
+
+# this code generates Boolean rules for the Adjacency Matrices
 # 
-# Provide number of nodes at the last line, num_nodes
-#
-#
+# all variations are generated
+# 
+# 
 
 
-library(BoolNet) 
-library(gtools)   
-
-#########################
-# 1. Matrix Hash
-#########################
-# This function generates a hash for a given adjacency matrix to uniquely identify it.
-
-matrix_hash <- function(mat) {
-  n     <- nrow(mat)
-  perms <- gtools::permutations(n, n, 1:n) 
-  hashes <- apply(perms, 1, function(p) {
-    paste(mat[p, p], collapse = ",") 
-  })
-  min(hashes) 
-}
+library(combinat)  
+library(digest)    
 
 #########################
-# 2. Adjacency Matrices (Unique)
+# 1. Adjacency Matrices Generation
 #########################
-# This function generates all possible adjacency matrices for the ***given number of nodes*** by the user,
-# filters out duplicate matrices using `matrix_hash`, and returns only unique matrices.
-adjmat <- function(n) {
-  vals   <- c(-1, 0, 1)              # -1 (inhibitory), 0 (no connection), 1 (activating)
-  combos <- expand.grid(rep(list(vals), n * n))  
-  mats   <- lapply(seq_len(nrow(combos)), function(i) 
-    matrix(as.numeric(combos[i, ]), nrow = n, byrow = FALSE) 
-  )
-  hashes <- vapply(mats, matrix_hash, character(1)) 
-  mats[!duplicated(hashes)]
-}
-
-#########################
-# 3. Boolean Expression Generation
-#########################
-
-to_bool <- function(adj_matrix) {
-  nodes <- colnames(adj_matrix) 
-  if (is.null(nodes)) nodes <- LETTERS[1:nrow(adj_matrix)] 
-
-  lapply(nodes, function(node) {
-    act <- nodes[adj_matrix[, node] == 1] 
-    inh <- nodes[adj_matrix[, node] == -1] 
-    act_str <- if (length(act)) paste(act, collapse = " | ") else ""  
-    inh_str <- if (length(inh)) paste(paste0("!", inh), collapse = " & ") else ""
-    if (nzchar(act_str) && nzchar(inh_str)) {
-      paste(act_str, "&", inh_str) 
-    } else if (nzchar(act_str)) {
-      act_str 
-    } else if (nzchar(inh_str)) {
-      inh_str  
-    } else {
-      "FALSE"  
-    }
-  }) -> exprs
-  names(exprs) <- nodes  
-  exprs  
-}
-
-#########################
-# 4. Network Builder
-#########################
-# Generates a Boolean network
-# If a node has no connectios, it creates a self-loop
-net_generator <- function(expressions, path) {
-  rules <- vapply(names(expressions), function(g) {
-    expr <- expressions[[g]]
-    if (expr == "FALSE")
-      paste0(g, ", ", g, " & ", g)  
-    else
-      paste0(g, ", ", expr)  
-  }, character(1))
-
-  writeLines(c("targets, functions", rules), con = path)  
-}
-
-#########################
-# 5. Network Analysis Usign BoolNet
-#########################
-
-analyze_network <- function(file_path) {
-  net <- loadNetwork(file_path, bodySeparator = ",")  
-  attr <- getAttractors(net, type = "synchronous", returnTable = TRUE)  
-  list(
-    attractors = attr$attractors,  
-    transitionTable = getTransitionTable(attr)  
-  )
-}
-
-#########################
-# 6. Main
-#########################
-
-process_networks <- function(num_nodes,
-                             output_dir = "network_rules",
-                             log_file   = "output.txt") {
-  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)  
-  sink(log_file, split = TRUE)  
-  on.exit(sink())  
-
-  mats <- adjmat(num_nodes)  
-  results <- vector("list", length(mats))  
-
-  for (i in seq_along(mats)) {
-    mat <- mats[[i]]
-    nn <- nrow(mat)
-    names <- LETTERS[1:nn] 
-    dimnames(mat) <- list(names, names)
-
-    exprs <- to_bool(mat)  
-    file_path <- file.path(output_dir, paste0("network_", i, ".txt"))  
-    net_generator(exprs, file_path)  
-
-    res <- analyze_network(file_path)  
-    results[[i]] <- list(
-      matrix  = mat,
-      expressions = exprs,
-      attractors  = res$attractors,
-      transition_table = res$transitionTable
-    )
-
-    
-    cat(sprintf("\n=== Network %d ===\n", i))
-    cat("Rules:\n")
-    for (line in readLines(file_path)[-1]) cat(line, "\n")
-    cat("Attractors:\n"); print(res$attractors)
-    cat("Transition Table:\n"); print(res$transitionTable)
-    cat(strrep("-", 40), "\n")  
+generate_adjacency_matrices_efficient <- function(n) {
+  total_edges <- n * n
+  total_graphs <- 3 ^ total_edges
+  cat("Total graphs to generate:", total_graphs, "\n")
+  
+  # Function to map base-3 digits to allowed signed values: 0 -> 0, 1 -> 1, 2 -> -1
+  base3_to_signed <- function(vec) {
+    sapply(vec, function(x) if (x == 0) 0 else if (x == 1) 1 else -1)
   }
-
-  sink()
-  cat("Log file written to:", log_file, "\n")
-  invisible(results)  
+  
+  
+  int_to_base3 <- function(num, len) {
+    base3 <- integer(len)
+    for (i in 1:len) {
+      base3[i] <- num %% 3
+      num <- num %/% 3
+    }
+    return(rev(base3))
+  }
+  
+  
+  perms <- combinat::permn(n)
+  
+  
+  canonical_signature <- function(mat, perms) {
+    sigs <- sapply(perms, function(p) {
+      permuted_mat <- mat[p, p, drop = FALSE]
+      paste(as.vector(permuted_mat), collapse = ",")
+    })
+    return(min(sigs))
+  }
+  
+  
+  canonical_hashes <- new.env(hash = TRUE, parent = emptyenv())
+  unique_matrices <- list()
+  
+  for (i in 0:(total_graphs - 1)) {
+    vec <- int_to_base3(i, total_edges)
+    adj_vals <- base3_to_signed(vec)
+    mat <- matrix(adj_vals, nrow = n, byrow = TRUE)
+    
+    sig <- canonical_signature(mat, perms)
+    h <- digest::digest(sig)
+    
+    if (!exists(h, envir = canonical_hashes)) {
+      assign(h, TRUE, envir = canonical_hashes)
+      unique_matrices[[length(unique_matrices) + 1]] <- mat
+    }
+  }
+  
+  cat("Number of unique canonical matrices:", length(unique_matrices), "\n")
+  return(unique_matrices)
 }
 
 #########################
-# 7. Usage
+# 2. Boolean Expression Generator
 #########################
-# ***** Provide number of nodes *****
-results <- process_networks(num_nodes = 2) 
+generate_boolean_expressions <- function(adj_matrix) {
+  nodes <- colnames(adj_matrix) 
+  if (is.null(nodes)) {
+    nodes <- LETTERS[1:nrow(adj_matrix)] 
+  }
+  
+  
+  if (all(adj_matrix == 1)) {
+    expressions <- list()
+    expr_str <- paste(nodes, collapse = " | ")
+    for (node in nodes) {
+      expressions[[node]] <- expr_str
+    }
+    return(expressions)
+  }
+  
+  expressions <- list()  
+  for (node in nodes) {
+    
+    act_idx <- which(adj_matrix[, node] == 1)
+    inh_idx <- which(adj_matrix[, node] == -1)
+    
+    
+    act_variants <- c()
+    if (length(act_idx) > 0) {
+      if (length(act_idx) == 1) {  
+        act_variants <- nodes[act_idx]
+      } else {
+        act_variants <- c(paste(nodes[act_idx], collapse = " & "),
+                          paste(nodes[act_idx], collapse = " | "))
+      }
+    }
+    
+    
+    inh_variants <- c()
+    if (length(inh_idx) > 0) {
+      inhibited <- paste0("!", nodes[inh_idx])
+      if (length(inh_idx) == 1) {
+        inh_variants <- inhibited
+      } else {
+        inh_variants <- c(paste(inhibited, collapse = " & "),
+                          paste(inhibited, collapse = " | "))
+      }
+    }
+    
+    
+    candidates <- c()
+    if (length(act_variants) > 0 && length(inh_variants) > 0) {
+      for (a in act_variants) {
+        for (i in inh_variants) {
+          candidates <- c(candidates, paste(a, "&", i), paste(a, "|", i))
+        }
+      }
+    } else if (length(act_variants) > 0) {
+      candidates <- act_variants
+    } else if (length(inh_variants) > 0) {
+      candidates <- inh_variants
+    } else {
+      candidates <- "FALSE"  
+    }
+    
+    expressions[[node]] <- unique(candidates)
+  }
+  
+  return(expressions)  
+}
+
+#########################
+# 3. Generate Complete Network Variants
+#########################
+generate_network_variants <- function(expr_list) {
+  grid <- expand.grid(expr_list, stringsAsFactors = FALSE)
+  variants <- apply(grid, 1, function(row) { as.list(row) })
+  return(variants)
+}
+
+#########################
+# 4. Save Boolean Expressions to File (Numbered Networks)
+#########################
+save_boolean_expressions_to_file <- function(results, file_name) {
+  file_conn <- file(file_name, open = "w")
+  network_index <- 1
+  
+  for (result in results) {
+    expr_variations <- result$expressions
+    network_variants <- generate_network_variants(expr_variations)
+    
+    for (variant in network_variants) {
+      writeLines(paste("Network", network_index, ":"), file_conn)
+      for (node in names(variant)) {
+        current_expr <- variant[[node]]
+        if (current_expr == "FALSE") {
+          current_expr <- "0"
+        }
+        line <- paste0(node, ", ", current_expr)
+        writeLines(line, file_conn)
+      }
+      writeLines("", file_conn)  
+      network_index <- network_index + 1
+    }
+  }
+  close(file_conn)
+  cat("Finished writing all variations to file:", file_name, "\n")
+}
+
+#########################
+# 5. Generating and Saving Boolean Expressions
+#########################
+generate_and_save_expressions <- function(num_nodes, file_name) {
+  
+  adj_matrices <- generate_adjacency_matrices_efficient(num_nodes)
+  
+  results <- list()
+  for (matrix in adj_matrices) {
+    nNodes <- nrow(matrix)
+    letter_names <- LETTERS[1:nNodes]
+    colnames(matrix) <- rownames(matrix) <- letter_names
+    
+    expressions <- generate_boolean_expressions(matrix)
+    results <- append(results, list(list(matrix = matrix, expressions = expressions)))
+  }
+  
+  save_boolean_expressions_to_file(results, file_name)
+  return(results)
+}
+
+
+
+#########################
+# 7. Usage Example
+#########################
+# 
+# produces Boolean expressions for each, writes them to a text file
+# provide number of nodes in num_nodes
+
+results <- generate_and_save_expressions(num_nodes = 2, file_name = "boolean_expressions.txt")
+verify_boolean_expressions(results)
